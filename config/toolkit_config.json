@@ -1,0 +1,147 @@
+{
+  "opsec": {
+    "max_concurrent_scans": 3,
+    "scan_delay_range": [
+      30,
+      180
+    ],
+    "randomize_user_agents": true,
+    "proxy_rotation": true,
+    "tor_required": true,
+    "anti_forensics": true,
+    "log_retention_hours": 24
+  },
+  "tools": {
+    "recon": {
+      "amass": {
+        "version": "v4.2.0",
+        "installed": false
+      },
+      "subfinder": {
+        "version": "v2.6.3",
+        "installed": false
+      },
+      "naabu": {
+        "version": "v2.1.9",
+        "installed": false
+      },
+      "rustscan": {
+        "version": "2.1.1",
+        "installed": false
+      },
+      "httpx": {
+        "version": "v1.3.7",
+        "installed": false
+      },
+      "theharvester": {
+        "version": "4.4.4",
+        "installed": false
+      }
+    },
+    "payloads": {
+      "metasploit": {
+        "version": "6.3.57",
+        "installed": false
+      },
+      "sliver": {
+        "version": "1.5.42",
+        "installed": false
+      },
+      "havoc": {
+        "version": "0.7.0",
+        "installed": false
+      },
+      "scarecrow": {
+        "version": "latest",
+        "installed": false
+      },
+      "donut": {
+        "version": "1.0.3",
+        "installed": false
+      },
+      "greatSCT": {
+        "version": "1.2.7",
+        "installed": false
+      }
+    },
+    "privesc": {
+      "winpeas": {
+        "version": "latest",
+        "installed": false
+      },
+      "linpeas": {
+        "version": "latest",
+        "installed": false
+      },
+      "beroot": {
+        "version": "latest",
+        "installed": false
+      },
+      "seatbelt": {
+        "version": "1.2.2",
+        "installed": false
+      }
+    },
+    "c2": {
+      "mythic": {
+        "version": "3.2.0",
+        "installed": false
+      },
+      "chisel": {
+        "version": "1.9.1",
+        "installed": false
+      },
+      "dnscat2": {
+        "version": "0.07",
+        "installed": false
+      }
+    },
+    "evasion": {
+      "nimcrypt2": {
+        "version": "latest",
+        "installed": false
+      },
+      "pezor": {
+        "version": "latest",
+        "installed": false
+      },
+      "invoke_obfuscation": {
+        "version": "1.8",
+        "installed": false
+      }
+    }
+  },
+  "c2": {
+    "preferred_protocols": [
+      "https",
+      "dns",
+      "icmp"
+    ],
+    "jitter_range": [
+      10,
+      30
+    ],
+    "beacon_interval": 3600,
+    "domain_fronting": true,
+    "tor_hidden_service": true
+  },
+  "evasion": {
+    "av_engines": [
+      "defender",
+      "crowdstrike",
+      "sentinelone",
+      "carbonblack"
+    ],
+    "obfuscation_levels": [
+      "medium",
+      "high",
+      "maximum"
+    ],
+    "encryption_keys": {
+      "aes_key": "3ea2dac0e8b9de1f3e3c2f7dcbbbd081afebd51da5286755671a46ffae9b5750",
+      "xor_key": "053e5015b8cd5b6c7f11de5f3eb6c17f",
+      "rc4_key": "25c2e1b93c53b2b339917803fbd23c622916edba60e72084",
+      "session_key": "a3aa9c76448f338d4d8b18c4ea450ee4"
+    }
+  }
+}
