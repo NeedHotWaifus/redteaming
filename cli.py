@@ -1460,7 +1460,7 @@ touch -t 202001010000.00 file.txt
             try:
                 # Import TorService only when needed
                 sys.path.insert(0, str(self.toolkit_dir / "configs"))
-                from tor_service import TorService
+                from core.utils.tor_service import TorService
                 
                 # Initialize TorService with current loot directory and logger
                 tor_service = TorService(self.tool_executor.loot_dir if self.tool_executor else None, self.logger)
