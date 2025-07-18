@@ -10,7 +10,32 @@ import random
 import time
 import shutil
 import hashlib
-import requests
+try:
+    import requests
+except ImportError:
+    print("Warning: 'requests' module not found. Installing it or using fallback.")
+    try:
+        # Try to install requests
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+        import requests
+    except:
+        # Define a minimal fallback for requests
+        class DummyResponse:
+            def __init__(self, status_code=404, text=""):
+                self.status_code = status_code
+                self.text = text
+                self.content = text.encode('utf-8')
+                
+        class RequestsFallback:
+            def get(self, url, *args, **kwargs):
+                print(f"Warning: Using fallback requests.get for {url}")
+                return DummyResponse()
+                
+            def post(self, url, *args, **kwargs):
+                print(f"Warning: Using fallback requests.post for {url}")
+                return DummyResponse()
+                
+        requests = RequestsFallback()
 from datetime import datetime
 
 class RedTeamAI:

@@ -9,7 +9,7 @@ from typing import Dict, Any
 
 # Base Configuration
 BASE_DIR = Path(__file__).parent
-INSTALL_DIR = Path.home() / "redteam-toolkit"
+INSTALL_DIR = Path.home() / "toolkit"
 TOOLS_DIR = INSTALL_DIR / "tools"
 RESULTS_DIR = INSTALL_DIR / "results"
 LOGS_DIR = INSTALL_DIR / "logs"
@@ -30,13 +30,13 @@ SCAN_DELAY_MAX = 180
 ANTI_FORENSICS_ENABLED = True
 
 # Anonymity Settings
-PROTONMAIL_EMAIL = "your-email@protonmail.com"
+PROTONMAIL_EMAIL = "user@example.com"
 VPN_REQUIRED = False
 TRAFFIC_OBFUSCATION = True
 
 # Default Target Configuration
-DEFAULT_TARGET = "example.com"
-DEFAULT_LHOST = "127.0.0.1"
+DEFAULT_TARGET = "example.local"
+DEFAULT_LHOST = "0.0.0.0"
 DEFAULT_LPORT = 4444
 
 # Tool Paths Configuration

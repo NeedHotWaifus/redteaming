@@ -1,0 +1,4 @@
+# Core dependencies
+cryptography>=36.0.0
+requests>=2.25.0
+colorama>=0.4.4
