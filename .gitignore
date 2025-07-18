@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -71,3 +72,9 @@ loot/
 results/
 temp/
 *.log 
+=======
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+>>>>>>> a9bb1c92714ba51a67df7edd3946ab285d202735
