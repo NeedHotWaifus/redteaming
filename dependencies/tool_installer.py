@@ -192,7 +192,7 @@ TOOLS = {
             "choco": "burp-suite-free-edition",
         },
         "linux": {
-            "apt": "burpsuite",
+            "apt": "burbsuite",
             "snap": "burpsuite-free",
         },
         "check_command": "burpsuite --version"
@@ -698,6 +698,127 @@ class ToolInstaller:
         success, _ = self._run_command(check_command)
         return success
 
+    def _download_file(self, url: str, output_path: Path) -> bool:
+        """
+        Download a file from a URL.
+        
+        Args:
+            url: The URL to download from
+            output_path: Where to save the file
+            
+        Returns:
+            True if download succeeded, False otherwise
+        """
+        try:
+            self.logger.info(f"📥 Downloading {url} to {output_path}")
+            
+            # Try using wget first if available
+            if self._check_command("wget"):
+                success, output = self._run_command(["wget", "-q", url, "-O", str(output_path)])
+                if success:
+                    return True
+                    
+            # Fall back to curl if wget fails or isn't available
+            elif self._check_command("curl"):
+                success, output = self._run_command(["curl", "-s", "-L", url, "-o", str(output_path)])
+                if success:
+                    return True
+                    
+            # If neither wget nor curl is available, use Python's urllib
+            else:
+                import urllib.request
+                urllib.request.urlretrieve(url, output_path)
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"❌ Failed to download {url}: {str(e)}")
+            return False
+            
+        return False
+        
+    def _clone_repository(self, repo_url: str, tool_name: str) -> Path:
+        """
+        Clone a Git repository.
+        
+        Args:
+            repo_url: The repository URL
+            tool_name: Name of the tool (used for directory name)
+            
+        Returns:
+            Path to the cloned repository, or None if failed
+        """
+        if not self._check_command("git"):
+            self.logger.error("❌ Git is not installed. Please install Git first.")
+            return None
+            
+        repo_dir = self.tools_dir / tool_name
+        
+        # Check if repository already exists
+        if (repo_dir / ".git").exists():
+            self.logger.info(f"📁 Repository for {tool_name} already exists, updating...")
+            try:
+                # Update existing repository
+                success, output = self._run_command(["git", "-C", str(repo_dir), "pull"])
+                if not success:
+                    self.logger.warning(f"⚠️ Failed to update {tool_name} repository: {output}")
+                return repo_dir
+            except Exception as e:
+                self.logger.error(f"❌ Failed to update {tool_name} repository: {str(e)}")
+                return None
+        
+        # Clone new repository
+        try:
+            self.logger.info(f"📥 Cloning {repo_url} to {repo_dir}")
+            success, output = self._run_command(["git", "clone", repo_url, str(repo_dir)])
+            
+            if success:
+                self.logger.info(f"✅ Successfully cloned {tool_name} repository")
+                return repo_dir
+            else:
+                self.logger.error(f"❌ Failed to clone {tool_name} repository: {output}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"❌ Failed to clone {tool_name} repository: {str(e)}")
+            return None
+            
+    def _build_from_source(self, repo_dir: Path, build_commands: List[str]) -> bool:
+        """
+        Build a tool from source.
+        
+        Args:
+            repo_dir: Path to the repository
+            build_commands: List of commands to run to build the tool
+            
+        Returns:
+            True if build succeeded, False otherwise
+        """
+        if not repo_dir or not repo_dir.exists():
+            self.logger.error("❌ Repository directory does not exist")
+            return False
+            
+        try:
+            self.logger.info(f"🔨 Building from source in {repo_dir}")
+            
+            for cmd in build_commands:
+                # Handle shell commands vs array commands
+                if isinstance(cmd, str):
+                    success, output = self._run_command(cmd, shell=True, timeout=600)
+                else:
+                    success, output = self._run_command(cmd, shell=False, timeout=600)
+                    
+                if not success:
+                    self.logger.error(f"❌ Build command failed: {cmd}")
+                    self.logger.error(f"Error output: {output}")
+                    return False
+                    
+            self.logger.info(f"✅ Successfully built from source")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to build from source: {str(e)}")
+            return False
+
     def install_tool(self, tool_name: str) -> bool:
         """
         Install a specific tool.
@@ -731,45 +852,140 @@ class ToolInstaller:
             
         # Try each available package manager in order of preference
         for manager, package in install_methods.items():
-            if manager in self.package_managers and self.package_managers[manager]:
-                self.logger.info(f"📦 Installing {tool_name} using {manager}...")
+            # Skip if package manager not available
+            if manager != "manual" and manager not in self.package_managers:
+                continue
                 
-                if manager == "choco":
-                    success, output = self._run_command(f"choco install {package} -y")
-                elif manager == "winget":
-                    success, output = self._run_command(f"winget install {package} --accept-package-agreements --accept-source-agreements")
-                elif manager == "scoop":
-                    success, output = self._run_command(f"scoop install {package}")
-                elif manager == "apt":
-                    success, output = self._run_command(f"sudo apt-get install -y {package}")
-                elif manager == "yum":
-                    success, output = self._run_command(f"sudo yum install -y {package}")
-                elif manager == "dnf":
-                    success, output = self._run_command(f"sudo dnf install -y {package}")
-                elif manager == "pacman":
-                    success, output = self._run_command(f"sudo pacman -S --noconfirm {package}")
-                elif manager == "snap":
-                    success, output = self._run_command(f"sudo snap install {package}")
-                elif manager == "pip":
-                    success, output = self._run_command(f"pip install {package}")
-                elif manager == "go":
-                    success, output = self._run_command(f"go install {package}")
-                elif manager == "installer":
-                    success, output = self._run_command(package, shell=True)
-                elif manager == "manual":
-                    self.logger.info(f"Manual installation required: {package}")
-                    return False
+            if manager != "manual" and not self.package_managers.get(manager, False):
+                continue
+                
+            self.logger.info(f"📦 Installing {tool_name} using {manager}...")
+            
+            if manager == "choco":
+                success, output = self._run_command(f"choco install {package} -y", shell=True)
+            elif manager == "winget":
+                success, output = self._run_command(f"winget install {package} --accept-package-agreements --accept-source-agreements", shell=True)
+            elif manager == "scoop":
+                success, output = self._run_command(f"scoop install {package}", shell=True)
+            elif manager == "apt":
+                success, output = self._run_command(f"sudo apt-get install -y {package}", shell=True)
+            elif manager == "yum":
+                success, output = self._run_command(f"sudo yum install -y {package}", shell=True)
+            elif manager == "dnf":
+                success, output = self._run_command(f"sudo dnf install -y {package}", shell=True)
+            elif manager == "pacman":
+                success, output = self._run_command(f"sudo pacman -S --noconfirm {package}", shell=True)
+            elif manager == "snap":
+                success, output = self._run_command(f"sudo snap install {package}", shell=True)
+            elif manager == "pip":
+                pip_cmd = "pip3" if self._check_command("pip3") else "pip"
+                
+                # Check if it's a requirements file specification
+                if package.startswith("-r "):
+                    # Clone the repository first if this is a requirements.txt
+                    repo_url = tool_info.get("repo")
+                    if repo_url:
+                        repo_dir = self._clone_repository(repo_url, tool_name)
+                        if repo_dir:
+                            req_file = repo_dir / package[3:].strip()
+                            if req_file.exists():
+                                success, output = self._run_command(f"{pip_cmd} install -r {req_file}", shell=True)
+                            else:
+                                self.logger.error(f"❌ Requirements file not found: {req_file}")
+                                success = False
+                        else:
+                            success = False
                 else:
-                    self.logger.error(f"Unknown package manager: {manager}")
-                    continue
+                    success, output = self._run_command(f"{pip_cmd} install {package}", shell=True)
                     
-                if success:
-                    self.logger.info(f"✅ Successfully installed {tool_name}")
-                    self.tools_installed += 1
-                    return True
+            elif manager == "go":
+                success, output = self._run_command(f"go install {package}", shell=True)
+            elif manager == "gem":
+                success, output = self._run_command(f"gem install {package}", shell=True)
+            elif manager == "npm":
+                success, output = self._run_command(f"npm install -g {package}", shell=True)
+            elif manager == "installer":
+                success, output = self._run_command(package, shell=True)
+            elif manager == "manual":
+                # Handle manual installation - could be Git repo or direct download
+                if package.startswith("http") and ("github.com" in package or "gitlab.com" in package) and package.endswith(".git"):
+                    # It's a Git repository
+                    repo_dir = self._clone_repository(package, tool_name)
+                    
+                    # Check if there are build commands
+                    build_commands = tool_info.get("build_commands", [])
+                    if repo_dir and build_commands:
+                        # Change to repository directory for build commands
+                        original_dir = os.getcwd()
+                        os.chdir(repo_dir)
+                        
+                        build_success = self._build_from_source(repo_dir, build_commands)
+                        
+                        # Change back to original directory
+                        os.chdir(original_dir)
+                        
+                        success = build_success
+                    else:
+                        success = repo_dir is not None
+                    
+                elif package.startswith("http") and any(ext in package for ext in [".zip", ".tar.gz", ".exe", ".msi", ".deb", ".rpm"]):
+                    # It's a direct download
+                    file_name = package.split("/")[-1]
+                    output_path = self.tools_dir / tool_name / file_name
+                    os.makedirs(output_path.parent, exist_ok=True)
+                    
+                    success = self._download_file(package, output_path)
+                    
+                    # Make executable if it's a binary
+                    if success and any(ext in file_name for ext in [".exe", ".sh"]):
+                        try:
+                            output_path.chmod(output_path.stat().st_mode | 0o111)  # Add executable bit
+                        except:
+                            pass
                 else:
-                    self.logger.error(f"❌ Failed to install {tool_name} using {manager}: {output}")
+                    # Unknown manual installation type
+                    self.logger.warning(f"⚠️ Manual installation required for {tool_name}: {package}")
+                    if self.interactive:
+                        print(f"\nManual installation required for {tool_name}:")
+                        print(f"  {package}")
+                        input("Press Enter to continue after manual installation...")
+                        # Check again if installed after manual step
+                        success = self.check_tool(tool_name)
+                    else:
+                        success = False
+            else:
+                self.logger.error(f"Unknown package manager: {manager}")
+                continue
+                
+            if success:
+                self.logger.info(f"✅ Successfully installed {tool_name}")
+                self.tools_installed += 1
+                return True
+            else:
+                self.logger.error(f"❌ Failed to install {tool_name} using {manager}: {output}")
         
+        # Handle direct download files outside of package managers
+        if "download_file" in tool_info:
+            download_url = tool_info["download_file"]
+            file_name = download_url.split("/")[-1]
+            output_path = self.tools_dir / tool_name / file_name
+            os.makedirs(output_path.parent, exist_ok=True)
+            
+            success = self._download_file(download_url, output_path)
+            
+            # Make executable if it's a script
+            if success and file_name.endswith((".sh", ".py")):
+                try:
+                    output_path.chmod(output_path.stat().st_mode | 0o111)  # Add executable bit
+                except:
+                    pass
+                    
+            if success:
+                self.logger.info(f"✅ Successfully downloaded {tool_name}")
+                self.tools_installed += 1
+                return True
+        
+        # If we get here, all installation methods failed
         self.tools_failed += 1
         return False
 
@@ -861,6 +1077,7 @@ def main():
     parser.add_argument("--tools", nargs="+", help="Install specific tools by name")
     parser.add_argument("--non-interactive", action="store_true", help="Run without prompting")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("--update", action="store_true", help="Update existing tools")
     
     args = parser.parse_args()
     
@@ -882,6 +1099,14 @@ def main():
         installer.install_post_exploitation_tools()
     elif args.tools:
         installer.install_tools(tool_names=args.tools)
+    elif args.update:
+        # Update existing tools by reinstalling them
+        installed_tools = [tool for tool in TOOLS.keys() if installer.check_tool(tool)]
+        if installed_tools:
+            print(f"Updating {len(installed_tools)} installed tools...")
+            installer.install_tools(tool_names=installed_tools)
+        else:
+            print("No installed tools found to update.")
     else:
         # If no specific option is given, prompt user
         print("Please select an installation option:")
@@ -890,10 +1115,11 @@ def main():
         print("3) Install reconnaissance tools")
         print("4) Install exploitation tools")
         print("5) Install post-exploitation tools")
+        print("6) Update existing tools")
         print("0) Exit")
         
         try:
-            choice = input("Enter your choice [0-5]: ").strip()
+            choice = input("Enter your choice [0-6]: ").strip()
             
             if choice == "1":
                 installer.install_all_tools()
@@ -905,6 +1131,14 @@ def main():
                 installer.install_exploitation_tools()
             elif choice == "5":
                 installer.install_post_exploitation_tools()
+            elif choice == "6":
+                # Update existing tools
+                installed_tools = [tool for tool in TOOLS.keys() if installer.check_tool(tool)]
+                if installed_tools:
+                    print(f"Updating {len(installed_tools)} installed tools...")
+                    installer.install_tools(tool_names=installed_tools)
+                else:
+                    print("No installed tools found to update.")
             elif choice == "0":
                 print("Exiting...")
             else:
